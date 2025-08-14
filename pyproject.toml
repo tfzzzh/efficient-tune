@@ -1,0 +1,41 @@
+[project]
+name = "efficient_tune"
+version = "1.0.0"
+description = "Efficient Fine Tuning of LLM"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"  # Python 3.13 not yet supported for some deps
+dependencies = [
+    "datasets>=2.14.4",
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp312-cp312-linux_x86_64.whl",
+    "jupyter>=1.1.1",
+    "math-verify[antlr4-13-2]>=0.7.0",
+    "pylatexenc==2.10",
+    "notebook>=7.4.2",
+    "pytest>=8.3.5",
+    "torch==2.5.1",
+    "tqdm>=4.67.1",
+    "transformers>=4.50.0",
+    "typer>=0.15.4",
+    "xopen>=2.0.2",
+    "PySocks",
+    "peft>=0.16.0",
+    "bitsandbytes>=0.46.0",
+    "tensorboardX>=2.6.0",
+    "tensorboard"
+]
+
+[tool.setuptools.packages.find]
+include = ["efficient_tune"]
+
+[tool.uv]
+package = true
+python-preference = "managed"
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "WARNING"
+
+[[tool.uv.dependency-metadata]]
+name = "flash-attn"
+version = "2.7.4.post1"
+requires-dist = ["torch", "einops", "setuptools"]

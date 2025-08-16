@@ -1,12 +1,12 @@
 from tqdm import tqdm
 import torch
 import numpy as np
-from efficient_tune.trainer.sft import tokenize_prompt_and_output
+from efficient_tune.trainer.util_sft import tokenize_prompt_and_output
 from efficient_tune.evaluate import generate_answer
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from efficient_tune.drgrpo_grader import r1_zero_reward_fn
-from efficient_tune.trainer.grpo import compute_advantages
+from efficient_tune.trainer.util_grpo import compute_advantages
 
 
 def apply_r1_template_to_problem(question: str):

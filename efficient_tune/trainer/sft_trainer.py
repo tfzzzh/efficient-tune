@@ -1,4 +1,4 @@
-from efficient_tune.trainer.sft import sft_microbatch_train_step_using_network
+from efficient_tune.trainer.util_sft import sft_microbatch_train_step_using_network
 from efficient_tune.evaluate import evaluate_step
 import os
 import numpy as np

@@ -1,3 +1,4 @@
+import time
 import torch
 from torch import nn
 import numpy as np
@@ -7,7 +8,10 @@ import os
 from efficient_tune.evaluate import evaluate_step
 from efficient_tune.dataloader import make_grpo_dataloader, make_eval_dataloader
 from tqdm import tqdm
-from efficient_tune.trainer.grpo import compute_grpo_clip_loss
+from efficient_tune.trainer.util_grpo import (
+    compute_grpo_clip_loss,
+    selective_log_softmax,
+)
 from efficient_tune.tensorboard_logger import (
     make_tensorboard_logger,
 )
@@ -26,10 +30,10 @@ GRPO_TRAINER_DEFAULT_CONFIG = {
     "eps": 1e-8,
     # config for Scheduler
     "warmup_steps": 100,
-    "max_steps": 1000,      # step for perform optimizer.step (max_steps = n_grpo_epoch_per_batch * num_batch_sampled)
+    "max_steps": 1000,  # step for perform optimizer.step (max_steps = n_grpo_epoch_per_batch * num_batch_sampled)
     # step and batch_size
-    "num_prompts": 4,               # how many problem will be sampled in a train batch
-    "group_size_per_prompts": 8,    # how many answer will be sampled per question (batch_size = num_prompt * group_size_per_prompts)
+    "num_prompts": 4,  # how many problem will be sampled in a train batch
+    "group_size_per_prompts": 8,  # how many answer will be sampled per question (batch_size = num_prompt * group_size_per_prompts)
     "train_max_new_tokens": 800,
     "n_grpo_epoch_per_batch": 10,  # how many update shall I run when collect a training batch
     # "max_number_batch": 1,    # max_steps // n_grpo_steps
@@ -88,17 +92,17 @@ class GRPOTrainer:
             self.logger.log_metrics(train_info, step=i)
 
             # check point model
-            if (i+1) % self.trainer_config['save_steps'] == 0:
-                self.save_model(i+1)
+            if (i + 1) % self.trainer_config["save_steps"] == 0:
+                self.save_model(i + 1)
 
-            if (i+1) % self.trainer_config['eval_steps'] == 0:
+            if (i + 1) % self.trainer_config["eval_steps"] == 0:
                 eval_info = self.evaluate()
                 # print(f'iter={i}, eval_infos={eval_info}')
                 self.logger.log_metrics(eval_info, step=i)
 
     def save_model(self, iteration):
-        save_dir = self.trainer_config['save_dir']
-        save_dir = os.path.join(save_dir, f'iteration={iteration}')
+        save_dir = self.trainer_config["save_dir"]
+        save_dir = os.path.join(save_dir, f"iteration={iteration}")
         print(f"save model to {save_dir}")
 
         if not os.path.isdir(save_dir):
@@ -108,8 +112,12 @@ class GRPOTrainer:
 
     def _train_step(self):
         self.model.train()
+        start_time = time.time()
         batch = self._get_train_batch()
+        generate_batch_time = time.time() - start_time
+
         infos = {}
+        start_time = time.time()
         for _ in range(self.trainer_config["n_grpo_epoch_per_batch"]):
             info = self._update(batch)
 
@@ -117,14 +125,16 @@ class GRPOTrainer:
                 if key not in infos:
                     infos[key] = []
                 infos[key].append(info[key])
-
+        train_time = time.time() - start_time
         # aggregate infos
         infos = {key: np.mean(np.array(infos[key])) for key in infos}
 
         # compute train reward for this batch (lagged reward)
-        infos['train_reward'] = np.mean(np.array(batch['reward']))
-        infos['train_format_reward'] = np.mean(np.array(batch['format_reward']))
-        infos['train_output_length'] = np.mean(np.array(batch['generated_token_len']))
+        infos["train_reward"] = np.mean(np.array(batch["reward"]))
+        infos["train_format_reward"] = np.mean(np.array(batch["format_reward"]))
+        infos["train_output_length"] = np.mean(np.array(batch["generated_token_len"]))
+        infos["generate_batch_time"] = generate_batch_time
+        infos["train_time"] = train_time
 
         return infos
 
@@ -153,14 +163,16 @@ class GRPOTrainer:
             logits = logits.squeeze(0)  # [seqlen, num_vocab]
 
             logits = logits[prompt_token_length - 1 :, :]
-            logprob = torch.log_softmax(logits, dim=1)  # [seqlen, num_vocab]
-            logprob = torch.gather(logprob, dim=1, index=generated_tokens.unsqueeze(1))
-            logprob = logprob.squeeze(dim=1)
+            # replace with more efficent implement
+            # logprob = torch.log_softmax(logits, dim=1)  # [seqlen, num_vocab]
+            # logprob = torch.gather(logprob, dim=1, index=generated_tokens.unsqueeze(1))
+            # logprob = logprob.squeeze(dim=1)
+            logprob = selective_log_softmax(logits, generated_tokens)
             assert logprob.shape == generated_logsmx.shape
 
             # compute loss
             loss, loss_info = compute_grpo_clip_loss(
-                advantage, logprob, generated_logsmx, self.trainer_config['cliprange']
+                advantage, logprob, generated_logsmx, self.trainer_config["cliprange"]
             )
             loss = loss.mean()
             loss /= batch_size
@@ -170,7 +182,7 @@ class GRPOTrainer:
 
             # record loss
             loss_batch += loss.item()
-            hit_bar_ratio += loss_info['hit_bar_ratio'].item() / batch_size      
+            hit_bar_ratio += loss_info["hit_bar_ratio"].item() / batch_size
 
         # normalize gradient
         grad_norm_old = nn.utils.clip_grad_norm_(
@@ -183,9 +195,9 @@ class GRPOTrainer:
         self.scheduler.step()
         self.optimizer.zero_grad()
 
-        infos['loss'] = loss_batch
-        infos['grad_norm'] = grad_norm_old
-        infos['hit_bar_ratio'] = hit_bar_ratio
+        infos["loss"] = loss_batch
+        infos["grad_norm"] = grad_norm_old
+        infos["hit_bar_ratio"] = hit_bar_ratio
         return infos
 
     def _prepare_train_data(self, batch, idx):
@@ -226,7 +238,7 @@ class GRPOTrainer:
             batch = next(self.iter_train)
 
         return batch
-    
+
     def _get_eval_batch(self):
         try:
             batch = next(self.iter_eval)
@@ -236,27 +248,20 @@ class GRPOTrainer:
             batch = next(self.iter_eval)
         return batch
 
-
-    def _eval_step(
-        self, batch, infos_out
-    ):
+    def _eval_step(self, batch, infos_out):
         evaluate_step(
-            self.model, 
-            self.tokenizer, 
-            batch, 
-            self.trainer_config['eval_temperature'],
-            self.trainer_config['eval_top_p'],
-            self.trainer_config['eval_max_new_tokens'],
-            infos_out
+            self.model,
+            self.tokenizer,
+            batch,
+            self.trainer_config["eval_temperature"],
+            self.trainer_config["eval_top_p"],
+            self.trainer_config["eval_max_new_tokens"],
+            infos_out,
         )
 
     def evaluate(self):
-        max_iteration = self.trainer_config['eval_max_iteration']
-        evaluate_infos = {
-            'format_reward': [],
-            'answer_reward': [],
-            'reward': []
-        }
+        max_iteration = self.trainer_config["eval_max_iteration"]
+        evaluate_infos = {"format_reward": [], "answer_reward": [], "reward": []}
 
         for i in tqdm(range(max_iteration), desc="evaluate"):
             batch = self._get_eval_batch()

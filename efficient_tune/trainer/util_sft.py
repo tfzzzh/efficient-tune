@@ -104,6 +104,50 @@ def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     return entropy
 
 
+# def get_response_log_probs(
+#     model: PreTrainedModel,
+#     input_ids: torch.Tensor,
+#     labels: torch.Tensor,
+#     return_token_entropy: bool = False,
+# ) -> dict[str, torch.Tensor]:
+#     """
+
+#     Args:
+#         model (PreTrainedModel): HuggingFace model used for scoring
+#         input_ids (torch.Tensor): shape (batch_size, sequence_length)
+#         labels (torch.Tensor): shape (batch_size, sequence_length)
+#         return_token_entropy (bool, optional): If True, also return per-token entropy
+
+#     Returns:
+#         dict[str, torch.Tensor]:
+#             "log_probs" shape (batch_size, sequence_length)
+#             "token_entropy" optional, shape (batch_size, sequence_length)
+
+#     """
+#     # Obtain logits with model(input_ids).logits
+#     logits = model(input_ids).logits
+
+#     # compute stable logits which remove max of last dim
+#     logits_stable = logits - logits.max(dim=-1, keepdim=True).values
+
+#     # compute log exp(logits) / sum exp(logits)
+#     # which equals: logits - log sum exp(logits)
+#     exp = torch.exp(logits_stable)
+#     normalizer = torch.sum(exp, dim=-1, keepdim=True)
+#     log_smx = logits_stable - torch.log(normalizer)
+
+#     # slice out log probs using gather
+#     log_probs = torch.gather(log_smx, dim=-1, index=labels.unsqueeze(-1))
+#     log_probs = log_probs.squeeze(-1)
+
+#     result = {"log_probs": log_probs}
+#     if return_token_entropy:
+#         smx = exp / normalizer
+#         result["token_entropy"] = -(smx * log_smx).sum(dim=-1)
+
+#     return result
+
+
 def get_response_log_probs(
     model: PreTrainedModel,
     input_ids: torch.Tensor,
@@ -126,27 +170,45 @@ def get_response_log_probs(
     """
     # Obtain logits with model(input_ids).logits
     logits = model(input_ids).logits
+    logps = selective_log_softmax(logits, labels) 
+    result = {"log_probs": logps}
 
-    # compute stable logits which remove max of last dim
-    logits_stable = logits - logits.max(dim=-1, keepdim=True).values
-
-    # compute log exp(logits) / sum exp(logits)
-    # which equals: logits - log sum exp(logits)
-    exp = torch.exp(logits_stable)
-    normalizer = torch.sum(exp, dim=-1, keepdim=True)
-    log_smx = logits_stable - torch.log(normalizer)
-
-    # slice out log probs using gather
-    log_probs = torch.gather(log_smx, dim=-1, index=labels.unsqueeze(-1))
-    log_probs = log_probs.squeeze(-1)
-
-    result = {"log_probs": log_probs}
     if return_token_entropy:
-        smx = exp / normalizer
-        result["token_entropy"] = -(smx * log_smx).sum(dim=-1)
+        smx = torch.softmax(logits, dim=-1)
+        result["token_entropy"] = -(smx * torch.log(smx)).sum(dim=-1)
 
     return result
 
+
+def selective_log_softmax(logits: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
+    """
+    A memory efficient implementation of `log_softmax` -> `gather` operation
+    equivalent to
+    ```python
+    logps = torch.gather(logits.softmax(-1), dim=-1 index=index.unsqueeze(-1)).squeeze(-1)
+    ```
+    
+    Args:
+        logits (torch.Tensor): tensor of shape (..., num_classes)
+        index (torch.Tensor): shape (...), specifying the selected classes
+
+    Returns:
+        torch.Tensor: Gathered log probabilities with the same shape with index
+    """
+    if logits.dtype in [torch.float32, torch.float64]:
+        selected_logits = torch.gather(logits, dim=-1, index=index.unsqueeze(-1)).squeeze(dim=-1)
+        logsumexp_values = torch.stack([torch.logsumexp(lg, dim=-1) for lg in logits])
+        per_token_logps = selected_logits - logsumexp_values
+    else:
+        # logsumexp approach is unstable with bfloat16,
+        per_token_logps = []
+        for row_logits, row_labels in zip(logits, index):
+            row_logp = torch.log_softmax(row_logits, dim=-1)
+            row_per_token_logps = row_logp.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1)
+            per_token_logps.append(row_per_token_logps)
+        per_token_logps = torch.stack(per_token_logps)
+    
+    return per_token_logps
 
 def masked_normalize(
     tensor: torch.Tensor,

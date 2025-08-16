@@ -2,6 +2,7 @@ from typing import Dict, Tuple, Literal
 import torch
 import numpy as np
 import warnings
+from .util_sft import selective_log_softmax
 
 
 def compute_group_normalized_rewards(

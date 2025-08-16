@@ -11,6 +11,7 @@ For simplicity, all examples use the Qwen/Qwen2.5-Math-1.5B model.
 
 ## Prerequisites
 - Python 3.12
+- CUDA 12
 - NVIDIA GPU with at least 8 GB VRAM (All experiments were run on an RTX 3070 Ti)
 
 ## Quick Start
@@ -29,6 +30,11 @@ uv sync
 
 # Run tests to verify installation
 uv run pytest
+```
+If the building process failed on your machine, the reason might be that the ABI of flash-attention 
+is not compatible with your torch. You might change the flash-attention package in `pyproject.toml` to
+```
+flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiTrue-cp312-cp312-linux_x86_64.whl
 ```
 
 ### Fine-tuning

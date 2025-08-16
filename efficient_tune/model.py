@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+import transformers
+from liger_kernel.transformers import apply_liger_kernel_to_qwen2
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers import BitsAndBytesConfig 
@@ -14,6 +16,7 @@ from peft.tuners.lora import LoraLayer
 #########
 MODEL_DEFAULT_CONFIG = {
     "model_name": "Qwen/Qwen2.5-Math-1.5B",
+    "use_liger_kernel": True,
     "torch_dtype": "bfloat16", 
     "attn_implementation": "flash_attention_2",
     "lora_r": 64,
@@ -28,6 +31,8 @@ MODEL_DEFAULT_CONFIG = {
 
 
 def make_model_and_tokenizer(model_config):
+    if model_config['use_liger_kernel']:
+        apply_liger_kernel_to_qwen2()
     pretrain_config = {}
     pretrain_config['torch_dtype'] = model_config['torch_dtype']
     pretrain_config['attn_implementation'] = model_config['attn_implementation']
